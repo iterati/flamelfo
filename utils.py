@@ -4,9 +4,8 @@ import xml.etree.cElementTree as ET
 NFRAMES = 30
 
 def normalize(val, max_val=1):
-    if val < 0:
-        val -= max_val * math.floor(val)
-    return val - (val/max_val) * max_val
+    x = val/float(max_val)
+    return (x - math.floor(x)) * max_val
 
 def print_loop(flame, nframes=NFRAMES):
     element = ET.Element('flames')
