@@ -1,61 +1,87 @@
 from variations import variation_list, variable_list
 import lfos
 from utils import polar, rect
-import colorsys, itertools
+import colorsys, itertools, operator
 import xml.etree.cElementTree as ET
 
 
 class Flames(object):
     def __init__(self, element=None, filename=None):
         self.flames = []
-        if (element and filename) or not (element or filename):
+        if operator.xor(element, filename):
             raise ValueError('Need element or filename, not both or neither')
         if element:
             self.from_element(element)
         elif filename:
             self.from_file(filename)
 
-        def from_element(self, element):
-            for flame in element.findall('flame'):
-                self.flames.append(Flame(flame))
+    def from_element(self, element):
+        if element.tag == 'flames':
+            self.flames = [Flame(flame) for flame in element.findall('flame')]
+        elif element.tag == 'flame':
+            self.flames = [Flame(element)]
+        else:
+            #TODO: ParseError?
+            raise ValueError('Needs to be in <flames> or <flame>')
 
-        def from_file(self, filename):
-            with open(filename, 'r') as f:
-                data = f.read()
-            element = ET.fromstring(data)
-            if element.tag == 'flames':
-                self.from_element(element)
-            elif element.tag == 'flame':
-                self.flames.append(Flame(element))
-            else:
-                raise ValueError('Needs to be in <flames> or <flame>')
+    def from_string(self, string):
+        self.from_element(ET.fromstring(string))
 
-        def iter_flames(self):
-            for flame in self.flames:
-                yield flame
+    def from_file(self, filename):
+        with open(filename, 'r') as f:
+            self.from_string(f.read())
 
-        def to_element(self):
-            element = ET.Element('flames')
-            element.extend([flame.to_element() for flame in self.iter_flames()])
-            return element
+    def iter_flames(self):
+        for flame in self.flames:
+            yield flame
 
-        def to_string(self):
-            return ET.tostring(self.to_element())
+    def to_element(self):
+        element = ET.Element('flames')
+        element.extend([flame.to_element() for flame in self.iter_flames()])
+        return element
 
-        def to_file(self, filename):
-            with open(filename, 'w') as f:
-                f.write(self.to_string())
+    def to_string(self):
+        return ET.tostring(self.to_element())
+
+    def to_file(self, filename):
+        with open(filename, 'w') as f:
+            f.write(self.to_string())
+        return True
 
 
 class Flame(object):
-    _never_write = set(('final', 'palette', 'xforms', 'name', 'scale',
-        'x_offset', 'y_offset', 'width', 'height', '_numx'))
-    _defaults = {'name': 'none', 'size': (720, 360), 'center': (0.0, 0.0),
-        'scale': 20, 'time': 0, 'rotate': 0.0, 'brightness': 4,
-        'gamma': 4, 'gamma_threshold': 0.04, 'background': (0., 0., 0.),
-        'vibrancy': 1, 'highlight_power': -1, 'interpolation_type': 'log',
-        'interpolation': 'linear', 'palette_mode': 'linear', 
-        'oversample': 1, 'filter': 0.2, 'quality': 100}
+    _never_write = (
+            'final',
+            'palette',
+            'xforms',
+            'name',
+            'scale',
+            'x_offset',
+            'y_offset',
+            'width',
+            'height',
+            '_numx',
+            )
+    _defaults = {
+            'name': 'none',
+            'size': (720, 360),
+            'center': (0.0, 0.0),
+            'scale': 20,
+            'time': 0,
+            'rotate': 0.0,
+            'brightness': 4,
+            'gamma': 4,
+            'gamma_threshold': 0.04,
+            'background': (0., 0., 0.),
+            'vibrancy': 1,
+            'highlight_power': -1,
+            'interpolation_type': 'log',
+            'interpolation': 'linear',
+            'palette_mode': 'linear',
+            'oversample': 1,
+            'filter': 0.2,
+            'quality': 100,
+            }
 
     def __init__(self, element=None):
         self.xforms = []
@@ -71,10 +97,14 @@ class Flame(object):
         for k, v in element.items():
             try:
                 if " " in v:
+                    #coefs, for instance, are stored as '# # # # # #' and need
+                    #need to be stored internally as floats.
                     setattr(self, k, map(float, v.split()))
                 else:
+                    #All numerical values should be stored as floats
                     setattr(self, k, float(v))
             except ValueError:
+                #If conversion to float won't work, keep value as string
                 setattr(self, k, v)
         self.name = str(self.name)
         self.scale = self.scale * 100 / self.size[0]
@@ -92,17 +122,23 @@ class Flame(object):
 
     def to_element(self):
         element = ET.Element('flame')
+        #attributes
         for k, v in self._iter_attributes():
             if isinstance(v, basestring):
                 pass
             elif hasattr(v, "__iter__"):
+                #For tuple and list elements, make a space-delimited string
                 v = " ".join(str(i if i % 1 else int(i)) for i in v)
             else:
+                #TODO: Might want to round here to truncate float precision errors
                 v = v if v % 1 else int(v)
             element.set(k, v)
+        #xforms
         element.extend(xform.to_string() for xform in self.xforms)
-        if self.final != None:
+        #finalxform
+        if self.final:
             element.apend(self.final.to_string())
+        #colors
         element.append(self.palette.to_string())
         return element
 
@@ -110,6 +146,7 @@ class Flame(object):
         return ET.tostring(self.to_element())
 
     def get_at(self, i):
+        #TODO: Refactor as this is basically to_element
         element = ET.Element('flame')
         for k, v in self._iter_attributes():
             if isinstance(v, basestring):
@@ -123,7 +160,7 @@ class Flame(object):
         if self.final != None:
             element.apend(self.final.to_string())
         element.append(self.palette.to_string())
-        return ET.tostring(element)
+        return element
 
     def copy(self):
         return Flame(ET.fromstring(self.to_string()))
@@ -133,6 +170,7 @@ class Flame(object):
             yield xform
 
     def _iter_attributes(self):
+        #This returns all writable attributes and the derived attribs
         return itertools.chain(
             (
                 ('name', self.name),
@@ -154,10 +192,26 @@ class Flame(object):
 
 
 class Xform(object):
-    _never_write = ('_parent', 'post', 'lfos', 'chaos',
-        'xx', 'xy', 'yx', 'yy', 'ox', 'oy')
-    _defaults = {'coefs': (1., 0., 0., 1., 0., 0.), 'linear': 1, 'color': 0.,
-        'color_speed': 0.5, 'opacity': 1., 'weight': 1.}
+    _never_write = (
+            '_parent',
+            'post',
+            'lfos',
+            'chaos',
+            'xx',
+            'xy',
+            'yx',
+            'yy',
+            'ox',
+            'oy',
+            )
+    _defaults = {
+            'coefs': (1., 0., 0., 1., 0., 0.),
+            'linear': 1,
+            'color': 0.,
+            'color_speed': 0.5,
+            'opacity': 1.,
+            'weight': 1.,
+            }
 
     def __init__(self, parent, element=None):
         self._parent = parent
@@ -192,11 +246,20 @@ class Xform(object):
             self.lfos.append(LFO(self, lfo))
 
     def to_element(self, print_lfos=True):
+        #need the right tag
         if self.isfinal():
             element = ET.Element('finalxform')
         else:
             element = ET.Element('xform')
-        element.set('coefs', "%g %g %g %g %g %g" % tuple(self.coefs))
+        #coefs attr
+        element.set('coefs', "{0} {1} {2} {3} {4} {5}".format(*self.coefs))
+        #post attr
+        if self.post:
+            element.set('post', self.post.to_string())
+        #chaos attr
+        if self.chaos:
+            element.set('chaos', self.chaos.to_string())
+        #other attrs
         for k, v in self._iter_attributes():
             if isinstance(v, basestring):
                 pass
@@ -205,10 +268,7 @@ class Xform(object):
             else:
                 v = v if v % 1 else int(v)
             element.set(k, v)
-        if self.chaos:
-            element.set('chaos', self.chaos.to_string())
-        if self.post:
-            element.set('post', self.post.to_string())
+        #lfos if necessary
         if self.lfos and print_lfos:
             for lfo in self.lfos:
                 if lfo.is_active():
@@ -216,7 +276,7 @@ class Xform(object):
         return element
 
     def to_string(self, print_lfos=True):
-        return ET.tostring(self.to_element())
+        return ET.tostring(self.to_element(print_lfos))
 
     def copy(self):
         return Xform(ET.fromstring(self.to_string()))
@@ -233,7 +293,7 @@ class Xform(object):
                     method(lfo.get_at(i))
                 else:
                     setattr(xform, lfo.target, (getattr(xform, lfo.target) + lfo.get_at(i)))
-        return xform.to_string(print_lfos=False)
+        return xform.to_element(print_lfos=False)
 
     def list_vars(self):
         return [i for i in variation_list if i in self.__dict__]
@@ -264,6 +324,12 @@ class Xform(object):
         self.xp = (self.xp[0]*v, self.xp[1])
         self.yp = (self.yp[0]*v, self.yp[1])
 
+    def scale_x(self, v):
+        self.xp = (self.xp[0]*v, self.xp[1])
+
+    def scale_y(self, v):
+        self.yp = (self.yp[0]*v, self.yp[1])
+
     def rotate(self, deg):
         self.xp = (self.xp[0], self.xp[1]+deg)
         self.yp = (self.yp[0], self.yp[1]+deg)
@@ -291,69 +357,61 @@ class Xform(object):
         except (AttributeError, ValueError):
             return None
 
-    def coefs():
-        def fget(self):
-            return (self.xx, self.xy, self.yx, self.yy, self.ox, self.oy)
-        def fset(self, value):
-            self.xx, self.xy, self.yx, self.yy, self.ox, self.oy = value
-        return locals()
-    coefs = property(**coefs())
+    @property
+    def coefs(self):
+        return (self.xx, self.xy, self.yx, self.yy, self.ox, self.oy)
+    @coefs.setter
+    def coefs(self, value):
+        self.xx, self.xy, self.yx, self.yy, self.ox, self.oy = value
 
-    def x():
-        def fget(self):
-            return self.xx, self.xy
-        def fset(self, value):
-            self.xx, self.xy = value
-        return locals()
-    x = property(**x())
-    
-    def y():
-        def fget(self):
-            return self.yx, self.yy
-        def fset(self, value):
-            self.yx, self.yy = value
-        return locals()
-    y = property(**y())
+    @property
+    def x(self):
+        return self.xx, self.xy
+    @x.setter
+    def x(self, value):
+        self.xx, self.xy = value
 
-    def o():
-        def fget(self):
-            return self.ox, self.oy
-        def fset(self, value):
-            self.ox, self.oy = value
-        return locals()
-    o = property(**o())
+    @property
+    def y(self):
+        return self.yx, self.yy
+    @y.setter
+    def y(self, value):
+        self.yx, self.yy = value
 
-    def polars():
-        def fget(self):
-            return self.xp, self.yp, self.op
-        def fset(self, value):
-            self.xp, self.yp, self.op = value
-        return locals()
-    polars = property(**polars())
+    @property
+    def o(self):
+        return self.ox, self.oy
+    @o.setter
+    def o(self, value):
+        self.ox, self.oy = value
 
-    def xp():
-        def fget(self):
-            return polar((self.xx, self.xy))
-        def fset(self, value):
-            self.xx, self.xy = rect(value)
-        return locals()
-    xp = property(**xp())
+    @property
+    def polars(self):
+        return self.xp, self.yp, self.op
+    @polars.setter
+    def polars(self, value):
+        self.xp, self.yp, self.op = value
 
-    def yp():
-        def fget(self):
-            return polar((self.yx, self.yy))
-        def fset(self, value):
-            self.yx, self.yy = rect(value)
-        return locals()
-    yp = property(**yp())
+    @property
+    def xp(self):
+        return polar((self.xx, self.xy))
+    @xp.setter
+    def xp(self, value):
+        self.xx, self.xy = rect(value)
 
-    def op():
-        def fget(self):
-            return polar((self.ox, self.oy))
-        def fset(self, value):
-            self.ox, self.oy = rect(value)
-        return locals()
-    op = property(**op())
+    @property
+    def yp(self):
+        return polar((self.yx, self.yy))
+    @yp.setter
+    def yp(self, value):
+        self.yx, self.yy = rect(value)
+
+    @property
+    def op(self):
+        return polar((self.ox, self.oy))
+    @op.setter
+    def op(self, value):
+        self.ox, self.oy = rect(value)
 
 
 class PostXform(Xform):
@@ -372,7 +430,7 @@ class PostXform(Xform):
         self.coefs = map(float, element.split())
 
     def to_string(self):
-        return "%g %g %g %g %g %g" % tuple(self.coefs)
+        return "{0} {1} {2} {3} {4} {5}".format(*self.coefs)
 
     def isactive(self):
         return self.coefs != (1, 0, 0, 1, 0, 1)
@@ -407,13 +465,38 @@ class Chaos(object):
 
 
 class LFO(object):
-    _defaults = {'target': None, 'freq': 1, 'shape': 'sin', 'amp': 0, 'phase': 0}
-    _shapes = ['sin', 'saw_up', 'saw_down', 'square', 'triangle']
+    _defaults = {
+            'target': None,
+            'freq': 1,
+            'shape': 'sin',
+            'amp': 0,
+            'phase': 0,
+            }
+    #TODO: generate from inspecting lfos?
+    _shapes = [
+            'sin',
+            'saw_up',
+            'saw_down',
+            'square',
+            'triangle'
+            ]
     _valid_targets = set.union(
             set(variation_list),
             set(variable_list),
-            set(['color', 'color_speed', 'weight', 'opacity', 'rotate', 'rotate_x',
-                'rotate_y', 'protate', 'protate_x', 'protate_y', 'orbit', 'porbit']))
+            set([
+                'color',
+                'color_speed',
+                'weight',
+                'opacity',
+                'rotate',
+                'rotate_x',
+                'rotate_y',
+                'protate',
+                'protate_x',
+                'protate_y',
+                'orbit',
+                'porbit',
+                ]))
 
     def __init__(self, parent, element=None):
         self._parent = parent
@@ -448,31 +531,29 @@ class LFO(object):
         else:
             return 0.
 
-    def target():
-        def fget(self):
-            return self._target
-        def fset(self, value):
-            if value in self._valid_targets:
-                self._target = value
-                try:
-                    self._targetp = self._parent.__dict__[self.target]
-                except KeyError:
-                    setattr(self._parent, value, 0.)
-            else:
-                raise ValueError('{0} is an invalid target'.format(value))
-        return locals()
-    target = property(**target())
+    @property
+    def target(self):
+        return self._target
+    @target.setter
+    def target(self, value):
+        if value in self._valid_targets:
+            self._target = value
+            try:
+                self._targetp = self._parent.__dict__[self.target]
+            except KeyError:
+                setattr(self._parent, value, 0.)
+        else:
+            raise ValueError('{0} is an invalid target'.format(value))
 
-    def shape():
-        def fget(self):
-            return self._shape
-        def fset(self, value):
-            if value in self.shapes:
-                self._shape = value
-            else:
-                raise ValueError('Invalid shape')
-        return locals()
-    shape = property(**shape())
+    @property
+    def shape(self):
+        return self._shape
+    @shape.setter
+    def shape(self, value):
+        if value in self.shapes:
+            self._shape = value
+        else:
+            raise ValueError('Invalid shape')
 
 
 class Palette(object):
@@ -486,7 +567,7 @@ class Palette(object):
 
     def from_element(self, element):
         for color in element:
-            self.colors[c._index] = Color(self._parent, element=element)
+            self.colors[color._index] = Color(self._parent, element=element)
 
     def to_elements(self):
         return [color.to_element() for color in self.colors]
@@ -518,19 +599,59 @@ class Color(object):
         except (AttributeError, ValueError):
             return None
 
-    def rgb():
-        def fget(self):
-            return self._color
-        def fset(self, value):
-            self._color = value
-        return locals()
-    rgb = property(**rgb())
+    @property
+    def rgb(self):
+        return self._color
+    @rgb.setter
+    def rgb(self, value):
+        self._color = value
 
-    def hsv():
-        def fget(self):
-            return colorsys.rgb_to_hsv(*(x/255. for x in self.rgb))
-        def fset(self, value):
-            self._color = colorsys.hsv_to_rgb(*value)
-        return locals()
-    hsv = property(**hsv())
+    @property
+    def r(self):
+        return self._color[0]
+    @r.setter
+    def r(self, value):
+        self._color = value, self.g, self.b
+
+    @property
+    def g(self):
+        return self._color[1]
+    @g.setter
+    def g(self, value):
+        self._color = self.r, value, self.b
+
+    @property
+    def b(self):
+        return self._color[2]
+    @b.setter
+    def b(self, value):
+        self._color = self.r, self.g, value
+
+    @property
+    def hsv(self):
+        return colorsys.rgb_to_hsv(*(x/255. for x in self.rgb))
+    @hsv.setter
+    def hsv(self, value):
+        self._color = colorsys.hsv_to_rgb(*value)
+
+    @property
+    def h(self):
+        return self.hsv[0]
+    @h.setter
+    def h(self, value):
+        self._color = colorsys.hsv_to_rgb(value, self.s, self.v)
+
+    @property
+    def s(self):
+        return self.hsv[1]
+    @s.setter
+    def s(self, value):
+        self._color = colorsys.hsv_to_rgb(self.h, value, self.v)
+
+    @property
+    def v(self):
+        return self.hsv[2]
+    @v.setter
+    def v(self, value):
+        self._color = colorsys.hsv_to_rgb(self.h, self.s, value)
 

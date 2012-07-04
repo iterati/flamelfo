@@ -1,6 +1,4 @@
-import random
 from collections import defaultdict
-from functools import partial
 
 flam3_nvariations = 99
 
